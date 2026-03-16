@@ -321,7 +321,7 @@ io.on('connection', (socket) => {
   }
 });
 
-const PORT = parseInt(process.env.PORT || '3001');
+const PORT = parseInt(process.env.PORT || '3000');
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[SERVER] Void game server running on port ${PORT}`);
 });

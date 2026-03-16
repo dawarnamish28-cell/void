@@ -10,11 +10,18 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 3000,
+    host: '0.0.0.0',
+    allowedHosts: ['.sandbox.novita.ai', 'localhost'],
+    hmr: {
+      host: '3000-igzxifru9h9jb22canktb-0e616f0a.sandbox.novita.ai',
+      protocol: 'wss',
+    },
     proxy: {
       '/socket.io': {
         target: 'http://localhost:3001',
         ws: true,
+        changeOrigin: true,
       },
     },
   },
