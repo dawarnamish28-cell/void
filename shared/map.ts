@@ -1,110 +1,106 @@
-import { TileType, MapData, RoomRegion, TaskStation, Vent } from './types';
+import { TileType, MapData, RoomRegion, TaskStation, Vent, Position } from './types';
 import { RoomName, TaskType, VENT_CONNECTIONS } from './constants';
 
-// Map: 60 tiles wide x 50 tiles tall (each tile = 32px)
-const W = 60;
-const H = 50;
+// Map: 160 tiles wide x 130 tiles tall (each tile = 32px → 5120x4160 pixel map)
+const W = 160;
+const H = 130;
 
-// ─── ROOM DEFINITIONS ───
-export const ROOMS: RoomRegion[] = [
-  { name: RoomName.CAFETERIA, x: 4, y: 2, width: 12, height: 8 },
-  { name: RoomName.WEAPONS, x: 22, y: 2, width: 8, height: 7 },
-  { name: RoomName.NAVIGATION, x: 38, y: 2, width: 10, height: 8 },
-  { name: RoomName.ADMIN, x: 4, y: 14, width: 10, height: 7 },
-  { name: RoomName.HALLWAY, x: 18, y: 13, width: 14, height: 5 },
-  { name: RoomName.SHIELDS, x: 38, y: 13, width: 10, height: 7 },
-  { name: RoomName.STORAGE, x: 4, y: 25, width: 10, height: 7 },
-  { name: RoomName.ENGINE_ROOM, x: 22, y: 22, width: 10, height: 8 },
-  { name: RoomName.REACTOR, x: 4, y: 36, width: 10, height: 7 },
-  { name: RoomName.SECURITY, x: 4, y: 47 - 7, width: 10, height: 7 }, // y=40
-  { name: RoomName.ELECTRICAL, x: 18, y: 36, width: 10, height: 7 },
-  { name: RoomName.O2, x: 34, y: 36, width: 10, height: 7 },
-  { name: RoomName.MEDBAY, x: 4, y: 47 - 7 + 0, width: 10, height: 7 }, // adjust
-  { name: RoomName.COMMUNICATIONS, x: 22, y: 47 - 7, width: 12, height: 7 },
-];
-
-// Simplified: keep rooms cleaner
+// ─── ROOM DEFINITIONS (large rooms like Among Us) ───
 export const ROOM_DEFS: RoomRegion[] = [
-  { name: RoomName.CAFETERIA, x: 3, y: 2, width: 12, height: 8 },
-  { name: RoomName.WEAPONS, x: 20, y: 2, width: 8, height: 7 },
-  { name: RoomName.NAVIGATION, x: 34, y: 2, width: 10, height: 8 },
+  // Top row
+  { name: RoomName.CAFETERIA,      x: 8,   y: 5,   width: 28, height: 22 },
+  { name: RoomName.WEAPONS,        x: 55,  y: 5,   width: 22, height: 18 },
+  { name: RoomName.NAVIGATION,     x: 100, y: 5,   width: 24, height: 22 },
 
-  { name: RoomName.CORRIDOR_1, x: 15, y: 4, width: 5, height: 4 },
-  { name: RoomName.CORRIDOR_2, x: 28, y: 4, width: 6, height: 4 },
+  // Corridors top
+  { name: RoomName.CORRIDOR_1,     x: 36,  y: 10,  width: 19, height: 8 },
+  { name: RoomName.CORRIDOR_2,     x: 77,  y: 10,  width: 23, height: 8 },
 
-  { name: RoomName.ADMIN, x: 3, y: 13, width: 10, height: 7 },
-  { name: RoomName.HALLWAY, x: 16, y: 13, width: 14, height: 5 },
-  { name: RoomName.SHIELDS, x: 34, y: 13, width: 10, height: 7 },
+  // Middle row
+  { name: RoomName.ADMIN,          x: 8,   y: 36,  width: 24, height: 18 },
+  { name: RoomName.HALLWAY,        x: 42,  y: 36,  width: 36, height: 14 },
+  { name: RoomName.SHIELDS,        x: 100, y: 36,  width: 24, height: 18 },
 
-  { name: RoomName.CORRIDOR_3, x: 8, y: 10, width: 4, height: 3 },
-  { name: RoomName.CORRIDOR_4, x: 38, y: 10, width: 4, height: 3 },
+  // Corridors middle (vertical connectors)
+  { name: RoomName.CORRIDOR_3,     x: 18,  y: 27,  width: 8,  height: 9 },
+  { name: RoomName.CORRIDOR_4,     x: 110, y: 27,  width: 8,  height: 9 },
 
-  { name: RoomName.STORAGE, x: 3, y: 23, width: 10, height: 7 },
-  { name: RoomName.ENGINE_ROOM, x: 18, y: 21, width: 10, height: 8 },
+  // Lower-mid section
+  { name: RoomName.STORAGE,        x: 8,   y: 62,  width: 24, height: 18 },
+  { name: RoomName.ENGINE_ROOM,    x: 50,  y: 58,  width: 24, height: 20 },
 
-  { name: RoomName.REACTOR, x: 3, y: 33, width: 10, height: 7 },
-  { name: RoomName.SECURITY, x: 3, y: 43, width: 10, height: 5 },
-  { name: RoomName.ELECTRICAL, x: 16, y: 33, width: 10, height: 7 },
-  { name: RoomName.O2, x: 30, y: 33, width: 10, height: 7 },
-  { name: RoomName.MEDBAY, x: 16, y: 43, width: 10, height: 5 },
-  { name: RoomName.COMMUNICATIONS, x: 30, y: 43, width: 12, height: 5 },
+  // Bottom section
+  { name: RoomName.REACTOR,        x: 8,   y: 88,  width: 24, height: 18 },
+  { name: RoomName.SECURITY,       x: 8,   y: 112, width: 24, height: 14 },
+  { name: RoomName.ELECTRICAL,     x: 42,  y: 88,  width: 24, height: 18 },
+  { name: RoomName.O2,             x: 86,  y: 88,  width: 24, height: 18 },
+  { name: RoomName.MEDBAY,         x: 42,  y: 112, width: 24, height: 14 },
+  { name: RoomName.COMMUNICATIONS, x: 86,  y: 112, width: 28, height: 14 },
 ];
 
-// Additional corridors to connect rooms
+// Corridors connecting rooms
 const CORRIDORS = [
-  // Cafeteria down to Admin
-  { x: 8, y: 10, width: 3, height: 3 },
-  // Admin to Hallway
-  { x: 13, y: 15, width: 3, height: 3 },
-  // Hallway to Shields
-  { x: 30, y: 14, width: 4, height: 3 },
-  // Hallway down to Engine Room
-  { x: 22, y: 18, width: 3, height: 3 },
-  // Storage down to Reactor
-  { x: 7, y: 30, width: 3, height: 3 },
-  // Admin down to Storage
-  { x: 7, y: 20, width: 3, height: 3 },
-  // Reactor down to Security
-  { x: 7, y: 40, width: 3, height: 3 },
-  // Security to Electrical
-  { x: 13, y: 44, width: 3, height: 3 },
-  // Electrical to O2
-  { x: 26, y: 35, width: 4, height: 3 },
-  // Security right to Medbay
-  { x: 13, y: 44, width: 3, height: 2 },
-  // Medbay to Communications
-  { x: 26, y: 44, width: 4, height: 3 },
-  // Engine Room to Electrical
-  { x: 22, y: 29, width: 3, height: 4 },
-  // Engine to Storage
-  { x: 13, y: 24, width: 5, height: 3 },
+  // Cafeteria ↔ Admin (vertical)
+  { x: 18, y: 27, width: 8, height: 9 },
+  // Admin ↔ Hallway (horizontal)
+  { x: 32, y: 41, width: 10, height: 7 },
+  // Hallway ↔ Shields (horizontal)
+  { x: 78, y: 41, width: 22, height: 7 },
+  // Corridor4 connecting Nav↔Shields (vertical)
+  { x: 110, y: 27, width: 8, height: 9 },
+  // Hallway ↔ Engine Room (vertical)
+  { x: 58, y: 50, width: 8, height: 8 },
+  // Admin ↔ Storage (vertical)
+  { x: 18, y: 54, width: 8, height: 8 },
+  // Storage ↔ Reactor (vertical)
+  { x: 18, y: 80, width: 8, height: 8 },
+  // Reactor ↔ Security (vertical)
+  { x: 18, y: 106, width: 8, height: 6 },
+  // Security ↔ Medbay (horizontal)
+  { x: 32, y: 116, width: 10, height: 6 },
+  // Electrical ↔ O2 (horizontal)
+  { x: 66, y: 93, width: 20, height: 7 },
+  // Medbay ↔ Communications (horizontal)
+  { x: 66, y: 116, width: 20, height: 6 },
+  // Engine ↔ Electrical (vertical)
+  { x: 58, y: 78, width: 8, height: 10 },
+  // Engine ↔ Storage (horizontal)
+  { x: 32, y: 66, width: 18, height: 7 },
+  // O2 ↔ Communications (vertical)
+  { x: 96, y: 106, width: 8, height: 6 },
+  // Shields ↔ O2 (vertical)
+  { x: 110, y: 54, width: 8, height: 8 },
+  // O2 ↔ upper connector
+  { x: 110, y: 62, width: 8, height: 8 },
+  // More corridor from Shields → lower right
+  { x: 110, y: 70, width: 8, height: 18 },
 ];
 
 // ─── TASK STATIONS ───
 export const TASK_STATIONS: TaskStation[] = [
-  { id: 'task_wire_cafeteria', type: TaskType.WIRE_FIX, position: { x: 8, y: 4 }, room: RoomName.CAFETERIA, label: 'Fix Wiring' },
-  { id: 'task_download_cafeteria', type: TaskType.DOWNLOAD_DATA, position: { x: 12, y: 6 }, room: RoomName.CAFETERIA, label: 'Download Data' },
-  { id: 'task_fuel_engine', type: TaskType.FUEL_UP, position: { x: 24, y: 25 }, room: RoomName.ENGINE_ROOM, label: 'Fuel Engines' },
-  { id: 'task_align_nav', type: TaskType.ALIGN_NAV, position: { x: 40, y: 5 }, room: RoomName.NAVIGATION, label: 'Align Engine' },
-  { id: 'task_shields', type: TaskType.CALIBRATE_SHIELDS, position: { x: 40, y: 16 }, room: RoomName.SHIELDS, label: 'Calibrate Shields' },
-  { id: 'task_scan_medbay', type: TaskType.SCAN_MEDBAY, position: { x: 20, y: 45 }, room: RoomName.MEDBAY, label: 'Scan MedBay' },
-  { id: 'task_id_admin', type: TaskType.ENTER_ID, position: { x: 8, y: 16 }, room: RoomName.ADMIN, label: 'Swipe Card' },
-  { id: 'task_wire_electrical', type: TaskType.WIRE_FIX, position: { x: 22, y: 36 }, room: RoomName.ELECTRICAL, label: 'Fix Wiring' },
-  { id: 'task_garbage_storage', type: TaskType.EMPTY_GARBAGE, position: { x: 6, y: 27 }, room: RoomName.STORAGE, label: 'Empty Garbage' },
-  { id: 'task_weapons', type: TaskType.CALIBRATE_SHIELDS, position: { x: 24, y: 5 }, room: RoomName.WEAPONS, label: 'Clear Asteroids' },
-  { id: 'task_o2_code', type: TaskType.ENTER_ID, position: { x: 36, y: 36 }, room: RoomName.O2, label: 'Clean Filter' },
-  { id: 'task_download_comms', type: TaskType.DOWNLOAD_DATA, position: { x: 36, y: 45 }, room: RoomName.COMMUNICATIONS, label: 'Download Data' },
+  { id: 'task_wire_cafeteria',   type: TaskType.WIRE_FIX,         position: { x: 20, y: 10 }, room: RoomName.CAFETERIA,      label: 'Fix Wiring' },
+  { id: 'task_download_cafeteria', type: TaskType.DOWNLOAD_DATA,  position: { x: 30, y: 18 }, room: RoomName.CAFETERIA,      label: 'Download Data' },
+  { id: 'task_fuel_engine',      type: TaskType.FUEL_UP,          position: { x: 62, y: 68 }, room: RoomName.ENGINE_ROOM,    label: 'Fuel Engines' },
+  { id: 'task_align_nav',        type: TaskType.ALIGN_NAV,        position: { x: 116, y: 14 }, room: RoomName.NAVIGATION,    label: 'Chart Course' },
+  { id: 'task_shields',          type: TaskType.CALIBRATE_SHIELDS, position: { x: 116, y: 44 }, room: RoomName.SHIELDS,      label: 'Calibrate Shields' },
+  { id: 'task_scan_medbay',      type: TaskType.SCAN_MEDBAY,      position: { x: 54, y: 118 }, room: RoomName.MEDBAY,       label: 'Submit Scan' },
+  { id: 'task_id_admin',         type: TaskType.ENTER_ID,         position: { x: 20, y: 44 }, room: RoomName.ADMIN,          label: 'Swipe Card' },
+  { id: 'task_wire_electrical',  type: TaskType.WIRE_FIX,         position: { x: 56, y: 96 }, room: RoomName.ELECTRICAL,     label: 'Fix Wiring' },
+  { id: 'task_garbage_storage',  type: TaskType.EMPTY_GARBAGE,    position: { x: 18, y: 70 }, room: RoomName.STORAGE,        label: 'Empty Garbage' },
+  { id: 'task_weapons',          type: TaskType.CALIBRATE_SHIELDS, position: { x: 66, y: 10 }, room: RoomName.WEAPONS,      label: 'Clear Asteroids' },
+  { id: 'task_o2_code',          type: TaskType.ENTER_ID,         position: { x: 100, y: 96 }, room: RoomName.O2,            label: 'Clean O2 Filter' },
+  { id: 'task_download_comms',   type: TaskType.DOWNLOAD_DATA,    position: { x: 100, y: 118 }, room: RoomName.COMMUNICATIONS, label: 'Download Data' },
 ];
 
 // ─── VENTS ───
 export const VENTS: Vent[] = [
-  { id: 'cafeteria_vent', position: { x: 10, y: 8 }, room: RoomName.CAFETERIA, connections: VENT_CONNECTIONS['cafeteria_vent'] },
-  { id: 'admin_vent', position: { x: 10, y: 15 }, room: RoomName.ADMIN, connections: VENT_CONNECTIONS['admin_vent'] },
-  { id: 'security_vent', position: { x: 8, y: 45 }, room: RoomName.SECURITY, connections: VENT_CONNECTIONS['security_vent'] },
-  { id: 'electrical_vent', position: { x: 22, y: 38 }, room: RoomName.ELECTRICAL, connections: VENT_CONNECTIONS['electrical_vent'] },
-  { id: 'medbay_vent', position: { x: 22, y: 45 }, room: RoomName.MEDBAY, connections: VENT_CONNECTIONS['medbay_vent'] },
-  { id: 'engine_vent', position: { x: 24, y: 27 }, room: RoomName.ENGINE_ROOM, connections: VENT_CONNECTIONS['engine_vent'] },
-  { id: 'reactor_vent', position: { x: 8, y: 37 }, room: RoomName.REACTOR, connections: VENT_CONNECTIONS['reactor_vent'] },
+  { id: 'cafeteria_vent', position: { x: 26, y: 22 }, room: RoomName.CAFETERIA,   connections: VENT_CONNECTIONS['cafeteria_vent'] },
+  { id: 'admin_vent',     position: { x: 26, y: 42 }, room: RoomName.ADMIN,       connections: VENT_CONNECTIONS['admin_vent'] },
+  { id: 'security_vent',  position: { x: 20, y: 120 }, room: RoomName.SECURITY,   connections: VENT_CONNECTIONS['security_vent'] },
+  { id: 'electrical_vent', position: { x: 56, y: 100 }, room: RoomName.ELECTRICAL, connections: VENT_CONNECTIONS['electrical_vent'] },
+  { id: 'medbay_vent',    position: { x: 56, y: 120 }, room: RoomName.MEDBAY,     connections: VENT_CONNECTIONS['medbay_vent'] },
+  { id: 'engine_vent',    position: { x: 64, y: 72 }, room: RoomName.ENGINE_ROOM, connections: VENT_CONNECTIONS['engine_vent'] },
+  { id: 'reactor_vent',   position: { x: 20, y: 96 }, room: RoomName.REACTOR,     connections: VENT_CONNECTIONS['reactor_vent'] },
 ];
 
 // ─── BUILD TILE MAP ───
@@ -128,7 +124,7 @@ export function buildTileMap(): number[][] {
     }
   }
 
-  // Fill corridors with floor
+  // Fill corridors
   for (const c of CORRIDORS) {
     for (let y = c.y; y < c.y + c.height; y++) {
       for (let x = c.x; x < c.x + c.width; x++) {
@@ -186,8 +182,8 @@ export function buildMapData(): MapData {
     rooms: ROOM_DEFS,
     taskStations: TASK_STATIONS,
     vents: VENTS,
-    spawnPoint: { x: 9, y: 6 },
-    emergencyButton: { x: 9, y: 5 },
+    spawnPoint: { x: 22, y: 16 },
+    emergencyButton: { x: 22, y: 14 },
   };
 }
 

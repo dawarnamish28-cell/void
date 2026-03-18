@@ -16,7 +16,7 @@ export default function MiniMap() {
     if (!canvas || !mapData) return;
 
     const ctx = canvas.getContext('2d')!;
-    const scale = 3;
+    const scale = 1.5;
     canvas.width = mapData.width * scale;
     canvas.height = mapData.height * scale;
 

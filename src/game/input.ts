@@ -68,7 +68,7 @@ export class InputManager {
         dx /= len;
         dy /= len;
       }
-      this.onMoveCallback(dx * GAME.PLAYER_SPEED * 0.1, dy * GAME.PLAYER_SPEED * 0.1, dir);
+      this.onMoveCallback(dx * GAME.PLAYER_SPEED * 0.15, dy * GAME.PLAYER_SPEED * 0.15, dir);
     }
   }
 }

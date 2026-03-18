@@ -9,7 +9,7 @@
     "dev:server": "tsx watch server/src/index.ts",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "build": "npm run build:client && npm run build:server",
+    "build": "npm run build:client",
     "start": "node dist-server/index.js",
     "preview": "npm run build && npm run start"
   },
