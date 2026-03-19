@@ -80,6 +80,11 @@ html, body, #root {
 .animate-shake { animation: shake 0.5s ease-in-out; }
 .animate-eject { animation: eject-spin 2s ease-in forwards; }
 
+@keyframes twinkle {
+  0%, 100% { opacity: 0.1; }
+  50% { opacity: 0.6; }
+}
+
 /* Task modal backdrop */
 .task-backdrop {
   background: rgba(0, 0, 0, 0.8);
