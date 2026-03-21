@@ -7,13 +7,17 @@ import { renderGame, updateInterpolationTargets } from '../game/renderer';
 import { InputManager, isWalkable } from '../game/input';
 import TaskModal from './Tasks/TaskModal';
 
+// Throttle: only send position to server every N ms
+const MOVE_EMIT_INTERVAL = 40; // 25 updates/sec to server
+
 export default function GameView() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<InputManager | null>(null);
   const animRef = useRef<number>(0);
+  const lastEmitRef = useRef<number>(0);
   const [showSabMenu, setShowSabMenu] = useState(false);
   const [showTaskList, setShowTaskList] = useState(true);
-  
+
   const mapData = useGameStore(s => s.mapData);
   const players = useGameStore(s => s.players);
   const bodies = useGameStore(s => s.bodies);
@@ -43,8 +47,6 @@ export default function GameView() {
   const isImpostor = myRole === PlayerRole.IMPOSTOR;
   const isAlive = me?.isAlive ?? false;
   const progressPct = totalTasks > 0 ? (taskProgress / totalTasks) * 100 : 0;
-
-  // Current room name
   const roomName = me ? getRoomAtPosition(Math.floor(me.position.x), Math.floor(me.position.y)) : null;
 
   // FOV radius
@@ -58,37 +60,53 @@ export default function GameView() {
     return base;
   })();
 
-  // Movement handler
+  // Movement handler with client-side prediction and throttled emit
   const handleMove = useCallback((dx: number, dy: number, dir: 'up' | 'down' | 'left' | 'right') => {
     if (!mapData || !me || !me.isAlive) return;
+
     const newX = me.position.x + dx;
     const newY = me.position.y + dy;
+
+    let finalX = me.position.x;
+    let finalY = me.position.y;
+
+    // Try full move
     if (isWalkable(newX, newY, mapData)) {
-      socketClient.emit(SocketEvents.PLAYER_MOVE, { x: newX, y: newY, direction: dir });
-      setMyPosition({ x: newX, y: newY });
-      setMyDirection(dir);
+      finalX = newX;
+      finalY = newY;
     } else if (isWalkable(newX, me.position.y, mapData)) {
-      socketClient.emit(SocketEvents.PLAYER_MOVE, { x: newX, y: me.position.y, direction: dir });
-      setMyPosition({ x: newX, y: me.position.y });
-      setMyDirection(dir);
+      // Slide along X
+      finalX = newX;
     } else if (isWalkable(me.position.x, newY, mapData)) {
-      socketClient.emit(SocketEvents.PLAYER_MOVE, { x: me.position.x, y: newY, direction: dir });
-      setMyPosition({ x: me.position.x, y: newY });
+      // Slide along Y
+      finalY = newY;
+    }
+
+    if (finalX !== me.position.x || finalY !== me.position.y) {
+      // Immediately update local position (client-side prediction)
+      setMyPosition({ x: finalX, y: finalY });
       setMyDirection(dir);
+
+      // Throttle server emissions
+      const now = performance.now();
+      if (now - lastEmitRef.current >= MOVE_EMIT_INTERVAL) {
+        socketClient.emit(SocketEvents.PLAYER_MOVE, { x: finalX, y: finalY, direction: dir });
+        lastEmitRef.current = now;
+      }
     }
   }, [mapData, me]);
 
-  // Proximity checks (throttled)
+  // Proximity checks
   useEffect(() => {
     if (!me || !me.isAlive) return;
-    const T = GAME.TILE_SIZE;
+    const TS = GAME.TILE_SIZE;
 
     if (isImpostor) {
       let closest: string | null = null;
       let closestDist = GAME.KILL_RANGE_PX;
       for (const p of players) {
         if (p.id === myId || !p.isAlive) continue;
-        const d = Math.hypot((p.position.x - me.position.x) * T, (p.position.y - me.position.y) * T);
+        const d = Math.hypot((p.position.x - me.position.x) * TS, (p.position.y - me.position.y) * TS);
         if (d < closestDist) { closestDist = d; closest = p.id; }
       }
       setNearbyKillTarget(closest);
@@ -97,7 +115,7 @@ export default function GameView() {
     let nearestBody: string | null = null;
     let nearestBodyDist = GAME.REPORT_RANGE_PX;
     for (const b of bodies) {
-      const d = Math.hypot((b.position.x - me.position.x) * T, (b.position.y - me.position.y) * T);
+      const d = Math.hypot((b.position.x - me.position.x) * TS, (b.position.y - me.position.y) * TS);
       if (d < nearestBodyDist) { nearestBodyDist = d; nearestBody = b.id; }
     }
     setNearbyBody(nearestBody);
@@ -107,7 +125,7 @@ export default function GameView() {
     for (const ts of TASK_STATIONS) {
       const mt = myTasks.find(t => t.station === ts.id && !t.completed);
       if (!mt) continue;
-      const d = Math.hypot((ts.position.x - me.position.x) * T, (ts.position.y - me.position.y) * T);
+      const d = Math.hypot((ts.position.x - me.position.x) * TS, (ts.position.y - me.position.y) * TS);
       if (d < nearestTaskDist) { nearestTaskDist = d; nearestTask = mt; }
     }
     setNearbyTask(nearestTask);
@@ -115,7 +133,7 @@ export default function GameView() {
     if (isImpostor) {
       let nearVent: string | null = null;
       for (const v of VENTS) {
-        const d = Math.hypot((v.position.x - me.position.x) * T, (v.position.y - me.position.y) * T);
+        const d = Math.hypot((v.position.x - me.position.x) * TS, (v.position.y - me.position.y) * TS);
         if (d < GAME.VENT_RANGE_PX * 1.5) { nearVent = v.id; break; }
       }
       setNearbyVent(nearVent);
@@ -123,12 +141,12 @@ export default function GameView() {
 
     const btn = mapData?.emergencyButton;
     if (btn) {
-      const d = Math.hypot((btn.x - me.position.x) * T, (btn.y - me.position.y) * T);
+      const d = Math.hypot((btn.x - me.position.x) * TS, (btn.y - me.position.y) * TS);
       setNearbyEmergencyButton(d < GAME.TASK_RANGE_PX * 2);
     }
   }, [me?.position.x, me?.position.y, players, bodies, myTasks]);
 
-  // Input
+  // Input setup
   useEffect(() => {
     const input = new InputManager();
     inputRef.current = input;
@@ -148,12 +166,13 @@ export default function GameView() {
 
     const render = () => {
       const parent = canvas.parentElement;
-      canvas.width = parent?.clientWidth || window.innerWidth;
-      canvas.height = parent?.clientHeight || window.innerHeight;
+      const w = parent?.clientWidth || window.innerWidth;
+      const h = parent?.clientHeight || window.innerHeight;
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
 
       const state = useGameStore.getState();
       updateInterpolationTargets(state.players);
-
       renderGame(ctx, canvas, mapData, state.players, state.bodies, myId, fovRadius, isGhost, state.sabotage.type);
       animRef.current = requestAnimationFrame(render);
     };
@@ -197,28 +216,25 @@ export default function GameView() {
 
   return (
     <div className="w-full h-full relative bg-black overflow-hidden">
-      {/* Full-screen canvas */}
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 
-      {/* ═══ HUD OVERLAY ═══ */}
+      {/* ═══ HUD ═══ */}
 
-      {/* Top-left: Task progress bar + task list */}
-      <div className="absolute top-3 left-3 z-10" style={{ maxWidth: '260px' }}>
-        {/* Task progress bar */}
-        <div className="bg-black/60 rounded-lg px-3 py-2 mb-1 backdrop-blur-sm border border-white/10">
-          <div className="flex justify-between text-[10px] text-green-300 mb-1 font-mono">
+      {/* Top-left: Task bar + list */}
+      <div className="absolute top-3 left-3 z-10" style={{ maxWidth: '280px' }}>
+        <div className="bg-black/70 rounded-lg px-3 py-2 mb-1 backdrop-blur-sm border border-white/10">
+          <div className="flex justify-between text-[11px] text-green-300 mb-1 font-mono">
             <span>Tasks</span>
             <span>{Math.round(progressPct)}%</span>
           </div>
-          <div className="w-full h-2.5 bg-gray-900 rounded-full border border-gray-700">
-            <div className="h-full bg-green-500 rounded-full transition-all duration-700" style={{ width: `${progressPct}%` }} />
+          <div className="w-full h-3 bg-gray-900 rounded-full border border-gray-700">
+            <div className="h-full bg-green-500 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
           </div>
         </div>
-        {/* Task list (collapsible) */}
         {showTaskList && (
-          <div className="bg-black/50 rounded-lg px-3 py-2 backdrop-blur-sm border border-white/10 max-h-48 overflow-y-auto">
+          <div className="bg-black/60 rounded-lg px-3 py-2 backdrop-blur-sm border border-white/10 max-h-52 overflow-y-auto">
             {myTasks.map(task => (
-              <div key={task.id} className={`text-[10px] py-0.5 font-mono ${task.completed ? 'text-green-500/50 line-through' : 'text-yellow-300/90'}`}>
+              <div key={task.id} className={`text-[11px] py-0.5 font-mono ${task.completed ? 'text-green-500/50 line-through' : 'text-yellow-300/90'}`}>
                 {task.room}: {task.label}
               </div>
             ))}
@@ -227,17 +243,17 @@ export default function GameView() {
         )}
       </div>
 
-      {/* Top-right: Settings area */}
+      {/* Top-right: Emergency button */}
       <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
         {nearbyEmergencyButton && isAlive && (
           <button onClick={handleMeeting}
-            className="w-10 h-10 rounded-full bg-red-600 hover:bg-red-500 flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-red-900/50 animate-pulse border-2 border-red-400">
+            className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-500 flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-red-900/50 animate-pulse border-2 border-red-400">
             !
           </button>
         )}
       </div>
 
-      {/* Sabotage alert (top center) */}
+      {/* Sabotage alert */}
       {sabotage.active && sabotage.type && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
           <div className="bg-red-900/80 backdrop-blur-sm px-6 py-2 rounded-lg border border-red-500/50 animate-pulse">
@@ -254,13 +270,12 @@ export default function GameView() {
       )}
 
       {/* Bottom center: Room name */}
-      <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10">
-        <div className="text-white/50 text-sm font-mono tracking-wider">{roomName || ''}</div>
+      <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10">
+        <div className="text-white/40 text-sm font-mono tracking-widest">{roomName || ''}</div>
       </div>
 
-      {/* Bottom-right: Action buttons (Among Us style circular) */}
+      {/* Bottom-right: Action buttons */}
       <div className="absolute bottom-4 right-4 z-10 flex items-end gap-3">
-        {/* Fix sabotage */}
         {sabotage.active && sabotage.type && isAlive && (
           <button onClick={handleFixSabotage}
             className="w-16 h-16 rounded-full bg-yellow-600 hover:bg-yellow-500 flex flex-col items-center justify-center text-white font-bold shadow-lg border-2 border-yellow-400 animate-pulse">
@@ -268,8 +283,6 @@ export default function GameView() {
             <span className="text-[8px]">FIX</span>
           </button>
         )}
-
-        {/* Report body */}
         {nearbyBody && isAlive && (
           <button onClick={handleReport}
             className="w-16 h-16 rounded-full bg-red-700 hover:bg-red-600 flex flex-col items-center justify-center text-white font-bold shadow-lg shadow-red-900/50 border-2 border-red-400">
@@ -277,8 +290,6 @@ export default function GameView() {
             <span className="text-[8px]">REPORT</span>
           </button>
         )}
-
-        {/* Use task */}
         {nearbyTask && !activeTask && isAlive && (
           <button onClick={handleUse}
             className="w-16 h-16 rounded-full bg-white/20 hover:bg-white/30 flex flex-col items-center justify-center text-white font-bold shadow-lg backdrop-blur-sm border-2 border-white/30">
@@ -286,8 +297,6 @@ export default function GameView() {
             <span className="text-[8px]">USE</span>
           </button>
         )}
-
-        {/* Impostor buttons */}
         {isImpostor && isAlive && (
           <>
             {nearbyVent && (
@@ -336,11 +345,10 @@ export default function GameView() {
       {/* Ghost indicator */}
       {!isAlive && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-0">
-          <div className="text-white/10 font-mono text-3xl font-bold">👻 GHOST</div>
+          <div className="text-white/10 font-mono text-3xl font-bold">GHOST</div>
         </div>
       )}
 
-      {/* Task Modal Overlay */}
       {activeTask && <TaskModal />}
     </div>
   );

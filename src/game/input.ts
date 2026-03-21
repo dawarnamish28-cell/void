@@ -1,13 +1,16 @@
 import { GAME } from '@shared/constants';
 import { TileType, MapData } from '@shared/types';
 
-const TILE = GAME.TILE_SIZE;
+// Movement: PLAYER_SPEED * factor per frame at 60fps
+// Speed 4 * 0.12 = 0.48 tiles/frame → about 29 tiles/sec at 60fps
+const SPEED_FACTOR = 0.12;
 
 export class InputManager {
   private keys = new Set<string>();
   private onMoveCallback: ((dx: number, dy: number, dir: 'up' | 'down' | 'left' | 'right') => void) | null = null;
   private animFrame: number | null = null;
   private enabled = true;
+  private lastTime = 0;
 
   constructor() {
     this.handleKeyDown = this.handleKeyDown.bind(this);
@@ -18,6 +21,7 @@ export class InputManager {
     this.onMoveCallback = onMove;
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
+    this.lastTime = performance.now();
     this.loop();
   }
 
@@ -34,7 +38,6 @@ export class InputManager {
   }
 
   private handleKeyDown(e: KeyboardEvent) {
-    // Don't capture when typing in input
     if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
     this.keys.add(e.key.toLowerCase());
   }
@@ -48,7 +51,9 @@ export class InputManager {
   }
 
   private loop() {
-    this.animFrame = requestAnimationFrame(() => this.loop());
+    this.animFrame = requestAnimationFrame((now) => {
+      this.loop();
+    });
 
     if (!this.enabled || !this.onMoveCallback) return;
 
@@ -62,13 +67,14 @@ export class InputManager {
     if (this.keys.has('d') || this.keys.has('arrowright')) { dx = 1; dir = 'right'; }
 
     if (dx !== 0 || dy !== 0) {
-      // Normalize diagonal movement
+      // Normalize diagonal
       if (dx !== 0 && dy !== 0) {
         const len = Math.sqrt(dx * dx + dy * dy);
         dx /= len;
         dy /= len;
       }
-      this.onMoveCallback(dx * GAME.PLAYER_SPEED * 0.15, dy * GAME.PLAYER_SPEED * 0.15, dir);
+      const speed = GAME.PLAYER_SPEED * SPEED_FACTOR;
+      this.onMoveCallback(dx * speed, dy * speed, dir);
     }
   }
 }

@@ -279,7 +279,7 @@ export class GameManager {
     const dx = x - player.position.x;
     const dy = y - player.position.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist > GAME.PLAYER_SPEED * 2) return; // Allow some tolerance
+    if (dist > GAME.PLAYER_SPEED * 3) return; // Allow tolerance for client-side prediction
 
     player.position.x = x;
     player.position.y = y;
