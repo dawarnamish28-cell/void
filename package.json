@@ -9,7 +9,7 @@
     "dev:server": "tsx watch server/src/index.ts",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "build": "npm run build:client",
+    "build": "npm run build:server",
     "start": "node dist-server/index.js",
     "preview": "npm run build && npm run start"
   },
@@ -37,8 +37,4 @@
     "typescript": "^5.3.3",
     "vite": "^5.0.12"
   }
-}
-"scripts": {
-  "build": "npx tsc -p tsconfig.server.json --outDir dist-server",
-  "start": "node dist-server/index.js"
 }
