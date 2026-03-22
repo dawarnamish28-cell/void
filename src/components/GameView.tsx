@@ -5,10 +5,11 @@ import { SocketEvents, GAME, PlayerRole, SabotageType, PLAYER_COLORS, RoomName }
 import { TASK_STATIONS, VENTS, ROOM_DEFS, getRoomAtPosition } from '@shared/map';
 import { renderGame, updateInterpolationTargets } from '../game/renderer';
 import { InputManager, isWalkable } from '../game/input';
+import { MapData, Position, PlayerView } from '@shared/types';
 import TaskModal from './Tasks/TaskModal';
 
-// Throttle: only send position to server every N ms
-const MOVE_EMIT_INTERVAL = 40; // 25 updates/sec to server
+// Throttle server updates
+const MOVE_EMIT_INTERVAL = 33; // ~30 updates/sec
 
 export default function GameView() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -18,9 +19,15 @@ export default function GameView() {
   const [showSabMenu, setShowSabMenu] = useState(false);
   const [showTaskList, setShowTaskList] = useState(true);
 
+  // ─── LOCAL POSITION (never overwritten by server) ───
+  // This is the single source of truth for OUR player's position.
+  // Server position is IGNORED for the local player.
+  const localPosRef = useRef<Position>({ x: 22, y: 16 });
+  const localDirRef = useRef<'up' | 'down' | 'left' | 'right'>('down');
+  const localPosInited = useRef(false);
+
+  // Read from store (but NOT for position of local player)
   const mapData = useGameStore(s => s.mapData);
-  const players = useGameStore(s => s.players);
-  const bodies = useGameStore(s => s.bodies);
   const myRole = useGameStore(s => s.myRole);
   const myTasks = useGameStore(s => s.myTasks);
   const sabotage = useGameStore(s => s.sabotage);
@@ -32,22 +39,32 @@ export default function GameView() {
   const nearbyTask = useGameStore(s => s.nearbyTask);
   const nearbyVent = useGameStore(s => s.nearbyVent);
   const nearbyEmergencyButton = useGameStore(s => s.nearbyEmergencyButton);
-  const setMyPosition = useGameStore(s => s.setMyPosition);
-  const setMyDirection = useGameStore(s => s.setMyDirection);
-  const setNearbyKillTarget = useGameStore(s => s.setNearbyKillTarget);
-  const setNearbyBody = useGameStore(s => s.setNearbyBody);
-  const setNearbyTask = useGameStore(s => s.setNearbyTask);
-  const setNearbyVent = useGameStore(s => s.setNearbyVent);
-  const setNearbyEmergencyButton = useGameStore(s => s.setNearbyEmergencyButton);
-  const setActiveTask = useGameStore.getState().setActiveTask;
 
   const myId = socketClient.id || '';
+  const isImpostor = myRole === PlayerRole.IMPOSTOR;
+
+  // Derive these from store players for HUD (not movement)
+  const players = useGameStore(s => s.players);
+  const bodies = useGameStore(s => s.bodies);
   const me = players.find(p => p.id === myId);
   const isGhost = me ? !me.isAlive : false;
-  const isImpostor = myRole === PlayerRole.IMPOSTOR;
   const isAlive = me?.isAlive ?? false;
   const progressPct = totalTasks > 0 ? (taskProgress / totalTasks) * 100 : 0;
-  const roomName = me ? getRoomAtPosition(Math.floor(me.position.x), Math.floor(me.position.y)) : null;
+
+  // Init local position from server the FIRST time we get our player data
+  useEffect(() => {
+    if (me && !localPosInited.current) {
+      localPosRef.current = { ...me.position };
+      localDirRef.current = me.direction || 'down';
+      localPosInited.current = true;
+    }
+  }, [me]);
+
+  // Room name from local position
+  const roomName = getRoomAtPosition(
+    Math.floor(localPosRef.current.x),
+    Math.floor(localPosRef.current.y)
+  );
 
   // FOV radius
   const fovRadius = (() => {
@@ -60,136 +77,199 @@ export default function GameView() {
     return base;
   })();
 
-  // Movement handler with client-side prediction and throttled emit
-  const handleMove = useCallback((dx: number, dy: number, dir: 'up' | 'down' | 'left' | 'right') => {
-    if (!mapData || !me || !me.isAlive) return;
+  // ─── MOVEMENT (reads from ref, not React state — never stale) ───
+  const handleMoveRef = useRef<((dx: number, dy: number, dir: 'up' | 'down' | 'left' | 'right') => void) | null>(null);
 
-    const newX = me.position.x + dx;
-    const newY = me.position.y + dy;
-
-    let finalX = me.position.x;
-    let finalY = me.position.y;
-
-    // Try full move
-    if (isWalkable(newX, newY, mapData)) {
-      finalX = newX;
-      finalY = newY;
-    } else if (isWalkable(newX, me.position.y, mapData)) {
-      // Slide along X
-      finalX = newX;
-    } else if (isWalkable(me.position.x, newY, mapData)) {
-      // Slide along Y
-      finalY = newY;
-    }
-
-    if (finalX !== me.position.x || finalY !== me.position.y) {
-      // Immediately update local position (client-side prediction)
-      setMyPosition({ x: finalX, y: finalY });
-      setMyDirection(dir);
-
-      // Throttle server emissions
-      const now = performance.now();
-      if (now - lastEmitRef.current >= MOVE_EMIT_INTERVAL) {
-        socketClient.emit(SocketEvents.PLAYER_MOVE, { x: finalX, y: finalY, direction: dir });
-        lastEmitRef.current = now;
-      }
-    }
-  }, [mapData, me]);
-
-  // Proximity checks
+  // Update the move handler ref (NOT a useCallback — no deps, no recreation)
   useEffect(() => {
-    if (!me || !me.isAlive) return;
-    const TS = GAME.TILE_SIZE;
+    handleMoveRef.current = (dx: number, dy: number, dir: 'up' | 'down' | 'left' | 'right') => {
+      const store = useGameStore.getState();
+      const md = store.mapData;
+      if (!md) return;
+      // Check alive from store
+      const meNow = store.players.find(p => p.id === socketClient.id);
+      if (!meNow || !meNow.isAlive) return;
 
-    if (isImpostor) {
-      let closest: string | null = null;
-      let closestDist = GAME.KILL_RANGE_PX;
-      for (const p of players) {
-        if (p.id === myId || !p.isAlive) continue;
-        const d = Math.hypot((p.position.x - me.position.x) * TS, (p.position.y - me.position.y) * TS);
-        if (d < closestDist) { closestDist = d; closest = p.id; }
+      const pos = localPosRef.current;
+      const newX = pos.x + dx;
+      const newY = pos.y + dy;
+
+      let finalX = pos.x;
+      let finalY = pos.y;
+
+      if (isWalkable(newX, newY, md)) {
+        finalX = newX;
+        finalY = newY;
+      } else if (isWalkable(newX, pos.y, md)) {
+        finalX = newX;
+      } else if (isWalkable(pos.x, newY, md)) {
+        finalY = newY;
       }
-      setNearbyKillTarget(closest);
-    }
 
-    let nearestBody: string | null = null;
-    let nearestBodyDist = GAME.REPORT_RANGE_PX;
-    for (const b of bodies) {
-      const d = Math.hypot((b.position.x - me.position.x) * TS, (b.position.y - me.position.y) * TS);
-      if (d < nearestBodyDist) { nearestBodyDist = d; nearestBody = b.id; }
-    }
-    setNearbyBody(nearestBody);
+      if (finalX !== pos.x || finalY !== pos.y) {
+        // Update local ref immediately (no React re-render needed for movement!)
+        localPosRef.current = { x: finalX, y: finalY };
+        localDirRef.current = dir;
 
-    let nearestTask: any = null;
-    let nearestTaskDist = GAME.TASK_RANGE_PX * 1.5;
-    for (const ts of TASK_STATIONS) {
-      const mt = myTasks.find(t => t.station === ts.id && !t.completed);
-      if (!mt) continue;
-      const d = Math.hypot((ts.position.x - me.position.x) * TS, (ts.position.y - me.position.y) * TS);
-      if (d < nearestTaskDist) { nearestTaskDist = d; nearestTask = mt; }
-    }
-    setNearbyTask(nearestTask);
-
-    if (isImpostor) {
-      let nearVent: string | null = null;
-      for (const v of VENTS) {
-        const d = Math.hypot((v.position.x - me.position.x) * TS, (v.position.y - me.position.y) * TS);
-        if (d < GAME.VENT_RANGE_PX * 1.5) { nearVent = v.id; break; }
+        // Throttle server emissions
+        const now = performance.now();
+        if (now - lastEmitRef.current >= MOVE_EMIT_INTERVAL) {
+          socketClient.emit(SocketEvents.PLAYER_MOVE, { x: finalX, y: finalY, direction: dir });
+          lastEmitRef.current = now;
+        }
       }
-      setNearbyVent(nearVent);
-    }
+    };
+  }, []);
 
-    const btn = mapData?.emergencyButton;
-    if (btn) {
-      const d = Math.hypot((btn.x - me.position.x) * TS, (btn.y - me.position.y) * TS);
-      setNearbyEmergencyButton(d < GAME.TASK_RANGE_PX * 2);
-    }
-  }, [me?.position.x, me?.position.y, players, bodies, myTasks]);
-
-  // Input setup
+  // ─── INPUT MANAGER (created ONCE, never recreated) ───
   useEffect(() => {
     const input = new InputManager();
     inputRef.current = input;
-    input.start(handleMove);
+    // Pass a stable wrapper that delegates to the ref
+    input.start((dx, dy, dir) => {
+      handleMoveRef.current?.(dx, dy, dir);
+    });
     return () => input.stop();
-  }, [handleMove]);
+  }, []); // Empty deps = created once
 
   useEffect(() => {
     inputRef.current?.setEnabled(!activeTask);
   }, [activeTask]);
 
-  // Canvas render loop
+  // ─── PROXIMITY CHECKS (use local position ref) ───
+  // Run in the render loop instead of React effects to avoid stale closures
+  const proximityRef = useRef<number>(0);
+
+  // ─── CANVAS RENDER LOOP ───
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !mapData) return;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
 
     const render = () => {
+      const state = useGameStore.getState();
+      const md = state.mapData;
+      if (!md) {
+        animRef.current = requestAnimationFrame(render);
+        return;
+      }
+
+      // Resize canvas only when needed
       const parent = canvas.parentElement;
       const w = parent?.clientWidth || window.innerWidth;
       const h = parent?.clientHeight || window.innerHeight;
       if (canvas.width !== w) canvas.width = w;
       if (canvas.height !== h) canvas.height = h;
 
-      const state = useGameStore.getState();
-      updateInterpolationTargets(state.players);
-      renderGame(ctx, canvas, mapData, state.players, state.bodies, myId, fovRadius, isGhost, state.sabotage.type);
+      // Build the player list for rendering:
+      // For the LOCAL player, use localPosRef (our predicted position).
+      // For OTHER players, use their server positions.
+      const sid = socketClient.id || '';
+      const renderPlayers: PlayerView[] = state.players.map(p => {
+        if (p.id === sid) {
+          return {
+            ...p,
+            position: { ...localPosRef.current },
+            direction: localDirRef.current,
+          };
+        }
+        return p;
+      });
+
+      updateInterpolationTargets(renderPlayers);
+
+      // Compute FOV
+      const meNow = state.players.find(p => p.id === sid);
+      const ghost = meNow ? !meNow.isAlive : false;
+      const imp = state.myRole === PlayerRole.IMPOSTOR;
+      let fov = GAME.FOV_RADIUS_NORMAL;
+      if (ghost) fov = 99999;
+      else {
+        if (imp) fov += GAME.IMPOSTOR_FOV_BONUS;
+        if (state.sabotage.active && state.sabotage.type === SabotageType.LIGHTS && !imp) {
+          fov = GAME.FOV_RADIUS_LIGHTS_OUT;
+        }
+      }
+
+      renderGame(ctx, canvas, md, renderPlayers, state.bodies, sid, fov, ghost, state.sabotage.type);
+
+      // ─── PROXIMITY CHECKS (every 3rd frame to reduce overhead) ───
+      proximityRef.current++;
+      if (proximityRef.current % 3 === 0 && meNow && meNow.isAlive) {
+        const TS = GAME.TILE_SIZE;
+        const myX = localPosRef.current.x;
+        const myY = localPosRef.current.y;
+
+        // Kill target
+        if (imp) {
+          let closest: string | null = null;
+          let closestDist = GAME.KILL_RANGE_PX;
+          for (const p of state.players) {
+            if (p.id === sid || !p.isAlive) continue;
+            const d = Math.hypot((p.position.x - myX) * TS, (p.position.y - myY) * TS);
+            if (d < closestDist) { closestDist = d; closest = p.id; }
+          }
+          if (closest !== state.nearbyKillTarget) useGameStore.getState().setNearbyKillTarget(closest);
+        }
+
+        // Body
+        let nearestBody: string | null = null;
+        let nearestBodyDist = GAME.REPORT_RANGE_PX;
+        for (const b of state.bodies) {
+          const d = Math.hypot((b.position.x - myX) * TS, (b.position.y - myY) * TS);
+          if (d < nearestBodyDist) { nearestBodyDist = d; nearestBody = b.id; }
+        }
+        if (nearestBody !== state.nearbyBody) useGameStore.getState().setNearbyBody(nearestBody);
+
+        // Task
+        let nearestTask: any = null;
+        let nearestTaskDist = GAME.TASK_RANGE_PX * 1.5;
+        for (const ts of TASK_STATIONS) {
+          const mt = state.myTasks.find(t => t.station === ts.id && !t.completed);
+          if (!mt) continue;
+          const d = Math.hypot((ts.position.x - myX) * TS, (ts.position.y - myY) * TS);
+          if (d < nearestTaskDist) { nearestTaskDist = d; nearestTask = mt; }
+        }
+        const curTask = state.nearbyTask;
+        if ((nearestTask?.id || null) !== (curTask?.id || null)) {
+          useGameStore.getState().setNearbyTask(nearestTask);
+        }
+
+        // Vent
+        if (imp) {
+          let nearVent: string | null = null;
+          for (const v of VENTS) {
+            const d = Math.hypot((v.position.x - myX) * TS, (v.position.y - myY) * TS);
+            if (d < GAME.VENT_RANGE_PX * 1.5) { nearVent = v.id; break; }
+          }
+          if (nearVent !== state.nearbyVent) useGameStore.getState().setNearbyVent(nearVent);
+        }
+
+        // Emergency button
+        const btn = md.emergencyButton;
+        const d = Math.hypot((btn.x - myX) * TS, (btn.y - myY) * TS);
+        const near = d < GAME.TASK_RANGE_PX * 2;
+        if (near !== state.nearbyEmergencyButton) useGameStore.getState().setNearbyEmergencyButton(near);
+      }
+
       animRef.current = requestAnimationFrame(render);
     };
-    render();
-    return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
-  }, [mapData, myId, fovRadius, isGhost]);
 
-  // Key bindings
+    animRef.current = requestAnimationFrame(render);
+    return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
+  }, []); // Empty deps — everything read from refs/store.getState()
+
+  // ─── KEY BINDINGS ───
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
       const k = e.key.toLowerCase();
       const s = useGameStore.getState();
-      if (k === 'q' && isImpostor && s.nearbyKillTarget) socketClient.emit(SocketEvents.KILL_PLAYER, { targetId: s.nearbyKillTarget });
+      const imp = s.myRole === PlayerRole.IMPOSTOR;
+      if (k === 'q' && imp && s.nearbyKillTarget) socketClient.emit(SocketEvents.KILL_PLAYER, { targetId: s.nearbyKillTarget });
       if (k === 'r' && s.nearbyBody) socketClient.emit(SocketEvents.REPORT_BODY, { bodyId: s.nearbyBody });
       if (k === 'f' && s.nearbyTask && !s.activeTask) useGameStore.getState().setActiveTask(s.nearbyTask);
-      if (k === 'e' && isImpostor && s.nearbyVent) {
+      if (k === 'e' && imp && s.nearbyVent) {
         const vent = VENTS.find(v => v.id === s.nearbyVent);
         if (vent?.connections.length) socketClient.emit(SocketEvents.USE_VENT, { ventId: s.nearbyVent, targetVentId: vent.connections[0] });
       }
@@ -198,20 +278,36 @@ export default function GameView() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isImpostor]);
+  }, []);
 
   // Action handlers
-  const handleKill = () => { if (nearbyKillTarget) socketClient.emit(SocketEvents.KILL_PLAYER, { targetId: nearbyKillTarget }); };
-  const handleReport = () => { if (nearbyBody) socketClient.emit(SocketEvents.REPORT_BODY, { bodyId: nearbyBody }); };
-  const handleUse = () => { if (nearbyTask && !activeTask) useGameStore.getState().setActiveTask(nearbyTask); };
+  const handleKill = () => {
+    const s = useGameStore.getState();
+    if (s.nearbyKillTarget) socketClient.emit(SocketEvents.KILL_PLAYER, { targetId: s.nearbyKillTarget });
+  };
+  const handleReport = () => {
+    const s = useGameStore.getState();
+    if (s.nearbyBody) socketClient.emit(SocketEvents.REPORT_BODY, { bodyId: s.nearbyBody });
+  };
+  const handleUse = () => {
+    const s = useGameStore.getState();
+    if (s.nearbyTask && !s.activeTask) useGameStore.getState().setActiveTask(s.nearbyTask);
+  };
   const handleVent = () => {
-    if (nearbyVent) {
-      const vent = VENTS.find(v => v.id === nearbyVent);
-      if (vent?.connections.length) socketClient.emit(SocketEvents.USE_VENT, { ventId: nearbyVent, targetVentId: vent.connections[0] });
+    const s = useGameStore.getState();
+    if (s.nearbyVent) {
+      const vent = VENTS.find(v => v.id === s.nearbyVent);
+      if (vent?.connections.length) socketClient.emit(SocketEvents.USE_VENT, { ventId: s.nearbyVent, targetVentId: vent.connections[0] });
     }
   };
-  const handleSabotage = (type: SabotageType, room?: RoomName) => { socketClient.emit(SocketEvents.TRIGGER_SABOTAGE, { type, targetRoom: room }); setShowSabMenu(false); };
-  const handleFixSabotage = () => { if (sabotage.active && sabotage.type) socketClient.emit(SocketEvents.FIX_SABOTAGE, { type: sabotage.type }); };
+  const handleSabotage = (type: SabotageType, room?: RoomName) => {
+    socketClient.emit(SocketEvents.TRIGGER_SABOTAGE, { type, targetRoom: room });
+    setShowSabMenu(false);
+  };
+  const handleFixSabotage = () => {
+    const s = useGameStore.getState();
+    if (s.sabotage.active && s.sabotage.type) socketClient.emit(SocketEvents.FIX_SABOTAGE, { type: s.sabotage.type });
+  };
   const handleMeeting = () => { socketClient.emit(SocketEvents.CALL_MEETING); };
 
   return (

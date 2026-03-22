@@ -79,9 +79,10 @@ export function renderGame(
 
   const cw = canvas.width;
   const ch = canvas.height;
-  const myPos = getInterpPos(myId, me.position);
-  const px = myPos.x * T + T / 2;
-  const py = myPos.y * T + T / 2;
+  // Local player position is ALREADY the predicted position (passed from GameView ref).
+  // Do NOT interpolate it — use it directly for zero-latency camera.
+  const px = me.position.x * T + T / 2;
+  const py = me.position.y * T + T / 2;
   const camX = px - cw / 2;
   const camY = py - ch / 2;
 
@@ -152,7 +153,9 @@ export function renderGame(
   // ─── Players (sorted by Y) ───
   const sorted = [...players].filter(p => p.isAlive || p.id === myId).sort((a, b) => a.position.y - b.position.y);
   for (const player of sorted) {
-    const pos = getInterpPos(player.id, player.position);
+    // Local player: use position directly (already predicted, no lerp delay).
+    // Other players: interpolate for smooth movement.
+    const pos = player.id === myId ? player.position : getInterpPos(player.id, player.position);
     drawPlayer(ctx, pos, player, player.id === myId);
   }
 

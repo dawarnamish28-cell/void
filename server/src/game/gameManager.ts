@@ -279,7 +279,10 @@ export class GameManager {
     const dx = x - player.position.x;
     const dy = y - player.position.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist > GAME.PLAYER_SPEED * 3) return; // Allow tolerance for client-side prediction
+    // Allow generous tolerance for client-side prediction + network batching
+    // Client moves at ~5.5 tiles/sec, sends at ~30/sec = ~0.18 tiles/packet
+    // Allow up to 2 tiles per packet for burst tolerance
+    if (dist > 2.0) return;
 
     player.position.x = x;
     player.position.y = y;

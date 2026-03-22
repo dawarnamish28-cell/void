@@ -1,9 +1,10 @@
 import { GAME } from '@shared/constants';
 import { TileType, MapData } from '@shared/types';
 
-// Movement: PLAYER_SPEED * factor per frame at 60fps
-// Speed 4 * 0.12 = 0.48 tiles/frame → about 29 tiles/sec at 60fps
-const SPEED_FACTOR = 0.12;
+// Target: ~5.5 tiles/sec at any FPS
+// At 60fps: 5.5/60 = 0.0917 tiles/frame
+// PLAYER_SPEED=4, so factor per second = 5.5/4 = 1.375
+const TILES_PER_SEC = 5.5;
 
 export class InputManager {
   private keys = new Set<string>();
@@ -22,7 +23,7 @@ export class InputManager {
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
     this.lastTime = performance.now();
-    this.loop();
+    this.loop(performance.now());
   }
 
   stop() {
@@ -50,12 +51,17 @@ export class InputManager {
     return this.keys.has(key);
   }
 
-  private loop() {
-    this.animFrame = requestAnimationFrame((now) => {
-      this.loop();
-    });
+  private loop(now: number) {
+    this.animFrame = requestAnimationFrame((t) => this.loop(t));
 
-    if (!this.enabled || !this.onMoveCallback) return;
+    if (!this.enabled || !this.onMoveCallback) {
+      this.lastTime = now;
+      return;
+    }
+
+    // Delta time in seconds (clamped to avoid huge jumps)
+    const dt = Math.min((now - this.lastTime) / 1000, 0.05);
+    this.lastTime = now;
 
     let dx = 0;
     let dy = 0;
@@ -73,7 +79,8 @@ export class InputManager {
         dx /= len;
         dy /= len;
       }
-      const speed = GAME.PLAYER_SPEED * SPEED_FACTOR;
+      // Delta-time based movement: consistent speed regardless of FPS
+      const speed = TILES_PER_SEC * dt;
       this.onMoveCallback(dx * speed, dy * speed, dir);
     }
   }
